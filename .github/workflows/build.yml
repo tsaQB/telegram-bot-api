@@ -77,17 +77,19 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install gperf:x64-windows openssl:x64-windows-static-md zlib:x64-windows-static-md
+          # gperf comes from Chocolatey: vcpkg builds it from the GNU mirrors,
+          # which time out on the runners.
+          choco install gperf -y --no-progress
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install openssl:x64-windows-static-md zlib:x64-windows-static-md
 
       - name: Configure
         shell: pwsh
         run: |
-          $vcpkg = $env:VCPKG_INSTALLATION_ROOT -replace '\', '/'
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT.Replace([char]92, [char]47)
           cmake -S . -B build -A x64 `
             "-DCMAKE_INSTALL_PREFIX=$PWD/build/install" `
             "-DCMAKE_TOOLCHAIN_FILE=$vcpkg/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            "-DGPERF_EXECUTABLE=$vcpkg/installed/x64-windows/tools/gperf/gperf.exe"
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
 
       - name: Build and install
         run: cmake --build build --target install --config Release --parallel
