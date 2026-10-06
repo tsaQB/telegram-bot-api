@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  linux:
     strategy:
       fail-fast: false
       matrix:
@@ -62,4 +62,48 @@ jobs:
           path: |
             build/install/bin/telegram-bot-api
             build/install/bin/telegram-bot-api.sha256
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # OpenSSL and zlib are linked statically (static-md triplet), so the
+      # result is a single telegram-bot-api.exe. gperf is only a build tool.
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install gperf:x64-windows openssl:x64-windows-static-md zlib:x64-windows-static-md
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT -replace '\', '/'
+          cmake -S . -B build -A x64 `
+            "-DCMAKE_INSTALL_PREFIX=$PWD/build/install" `
+            "-DCMAKE_TOOLCHAIN_FILE=$vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            "-DGPERF_EXECUTABLE=$vcpkg/installed/x64-windows/tools/gperf/gperf.exe"
+
+      - name: Build and install
+        run: cmake --build build --target install --config Release --parallel
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          cd build/install/bin
+          ./telegram-bot-api.exe --version
+          (Get-FileHash telegram-bot-api.exe -Algorithm SHA256).Hash.ToLower() + "  telegram-bot-api.exe" | Tee-Object telegram-bot-api.exe.sha256
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegram-bot-api-windows-amd64
+          path: |
+            build/install/bin/telegram-bot-api.exe
+            build/install/bin/telegram-bot-api.exe.sha256
           if-no-files-found: error
