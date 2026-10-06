@@ -8,33 +8,58 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    # Built on Debian 12 (glibc 2.36) so the binary runs on Debian/Armbian
+    # bookworm and anything newer. A binary built directly on the Ubuntu 24.04
+    # runner needs glibc 2.39 and does not start on bookworm.
+    container: debian:bookworm
     steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git make cmake g++ gperf libssl-dev zlib1g-dev file
+
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake g++ gperf libssl-dev zlib1g-dev
-
+      # OpenSSL, zlib and the C++ runtime are linked statically, so the board
+      # needs no extra packages: only glibc.
       - name: Configure
         run: |
-          mkdir -p build
-          cd build
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/install ..
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/build/install" \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE \
+            -DZLIB_USE_STATIC_LIBS=ON \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
 
       - name: Build and install
-        run: cmake --build build --target install -j$(nproc)
+        run: cmake --build build --target install -j"$(nproc)"
 
       - name: Smoke test
-        run: ./build/install/bin/telegram-bot-api --help | head -8
+        run: |
+          cd build/install/bin
+          strip telegram-bot-api
+          file telegram-bot-api
+          ldd telegram-bot-api
+          ./telegram-bot-api --version
+          sha256sum telegram-bot-api | tee telegram-bot-api.sha256
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: telegram-bot-api-linux-amd64
-          path: build/install/bin/telegram-bot-api
+          name: telegram-bot-api-linux-${{ matrix.arch }}
+          path: |
+            build/install/bin/telegram-bot-api
+            build/install/bin/telegram-bot-api.sha256
           if-no-files-found: error
